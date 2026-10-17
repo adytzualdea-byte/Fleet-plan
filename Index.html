@@ -1,0 +1,143 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FleetPlan</title>
+<style>
+body{font-family:Arial,sans-serif;max-width:650px;margin:30px auto;padding:16px;background:#f3f5f7;color:#18212b}
+main{background:white;padding:22px;border-radius:14px}
+h1{color:#176b55}input,select,textarea,button{box-sizing:border-box;width:100%;padding:12px;margin:7px 0;border:1px solid #ccd3da;border-radius:8px;font-size:16px}
+button{background:#176b55;color:white;border:0;font-weight:bold}
+.secondary{background:#475569}
+small{color:#64748b}
+</style>
+</head>
+<body>
+<main>
+<h1>FleetPlan</h1>
+<p>Daily transport planning</p>
+<div id="app">
+<p>Loading FleetPlan...</p>
+</div>
+</main>
+<script>
+const SUPABASE_URL = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdxZ2J1bnRkdnNkb2ZoeWV2dGR0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIyNDMwMjQsImV4cCI6MjEwNzgxOTAyNH0.ML2Irhbk7nilGE78T8bwo8ns3CNaT4kiVuIfDhMRTlQ";
+const SUPABASE_ANON_KEY = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdxZ2J1bnRkdnNkb2ZoeWV2dGR0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIyNDMwMjQsImV4cCI6MjEwNzgxOTAyNH0.ML2Irhbk7nilGE78T8bwo8ns3CNaT4kiVuIfDhMRTlQ";
+
+const app = document.getElementById("app");
+const params = new URLSearchParams(location.search);
+const token = params.get("token");
+
+function showError(message) {
+  app.innerHTML = "<p>" + message + "</p>";
+}
+
+async function request(path, options = {}) {
+  const response = await fetch(SUPABASE_URL + path, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": SUPABASE_ANON_KEY,
+      "Authorization": "Bearer " + SUPABASE_ANON_KEY,
+      ...(options.headers || {})
+    }
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(data?.message || data?.details || "Request failed");
+  return data;
+}
+
+async function driverPage() {
+  app.innerHTML = "<p>Loading your job...</p>";
+  try {
+    const jobs = await request(
+      "/rest/v1/rpc/get_driver_job",
+      {method:"POST",body:JSON.stringify({p_token:token})}
+    );
+    const job = Array.isArray(jobs) ? jobs[0] : jobs;
+    if (!job) throw new Error("No job found for this link.");
+    app.innerHTML = `
+      <h2>Your daily job</h2>
+      <p><b>Driver:</b> ${escapeText(job.driver_name || "")}</p>
+      <p><b>Date:</b> ${escapeText(job.job_date || "")}</p>
+      <p><b>Start time:</b> ${escapeText(job.start_time || "")}</p>
+      <p><b>Destination:</b> ${escapeText(job.destination || "")}</p>
+      <p><b>Night Out:</b> ${job.night_out ? "Yes" : "No"}</p>
+      <label for="reason">Reason for declining (required for Decline)</label>
+      <textarea id="reason" placeholder="Enter reason if declining"></textarea>
+      <button id="accept">Accept job</button>
+      <button id="decline" class="secondary">Decline job</button>
+      <p id="status"></p>`;
+    document.getElementById("accept").onclick = () => respond("accepted");
+    document.getElementById("decline").onclick = () => respond("declined");
+  } catch (e) {
+    showError("Unable to load job: " + escapeText(e.message));
+  }
+}
+
+function escapeText(value) {
+  return String(value).replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  }[c]));
+}
+
+async function respond(action) {
+  const reason = document.getElementById("reason").value.trim();
+  if (action === "declined" && !reason) {
+    document.getElementById("status").textContent = "Please enter a reason for declining.";
+    return;
+  }
+  try {
+    await request("/rest/v1/rpc/respond_to_job", {
+      method:"POST",
+      body:JSON.stringify({
+        p_token:token,
+        p_action:action,
+        p_reason:reason || null
+      })
+    });
+    document.getElementById("status").textContent = "Your response has been recorded.";
+  } catch (e) {
+    document.getElementById("status").textContent = "Error: " + e.message;
+  }
+}
+
+function adminPage() {
+  app.innerHTML = `
+    <h2>Administrator sign in</h2>
+    <input id="email" type="email" placeholder="Admin email">
+    <input id="password" type="password" placeholder="Password">
+    <button id="login">Sign in</button>
+    <p id="status"></p>
+    <small>Admin scheduling and live response dashboard are the next setup step.</small>`;
+  document.getElementById("login").onclick = async () => {
+    const status = document.getElementById("status");
+    status.textContent = "Signing in...";
+    try {
+      const result = await request("/auth/v1/token?grant_type=password", {
+        method:"POST",
+        headers:{"Authorization":"Bearer " + SUPABASE_ANON_KEY},
+        body:JSON.stringify({
+          email:document.getElementById("email").value,
+          password:document.getElementById("password").value
+        })
+      });
+      status.textContent = "Signed in. Admin dashboard setup is still required.";
+    } catch(e) {
+      status.textContent = "Sign-in failed: " + e.message;
+    }
+  };
+}
+
+if (!SUPABASE_URL.startsWith("https://") || SUPABASE_ANON_KEY.startsWith("PASTE_")) {
+  showError("Setup required: add your Supabase Project URL and anon/public key in this file.");
+} else if (token) {
+  driverPage();
+} else {
+  adminPage();
+}
+</script>
+</body>
+</html>
